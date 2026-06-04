@@ -10,7 +10,10 @@
     "lint": "eslint src --ext .ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
-    "db:print-010": "node -e \"const fs=require('fs');const path=require('path');const sql=fs.readFileSync(path.join(__dirname,'src/db/migrations/010_course_price_and_payments.sql'),'utf8');console.log('Ejecuta este SQL en Supabase > SQL Editor:\\n');console.log(sql);\""
+    "db:print-010": "node -e \"const fs=require('fs');const path=require('path');const sql=fs.readFileSync(path.join(__dirname,'src/db/migrations/010_course_price_and_payments.sql'),'utf8');console.log('Ejecuta este SQL en Supabase > SQL Editor:\\n');console.log(sql);\"",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "keywords": [
     "driving-school",
@@ -45,7 +48,10 @@
   },
   "devDependencies": {
     "@types/archiver": "^7.0.0",
+    "@types/jest": "^29.5.12",
     "@types/pdfkit": "^0.17.5",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.4",
     "tsx": "^4.7.0"
   }
 }

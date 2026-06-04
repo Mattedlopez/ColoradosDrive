@@ -1,6 +1,13 @@
+/**
+ * authService — Supabase session management only.
+ *
+ * Single responsibility: anything that touches Supabase Auth tokens or
+ * the auth.users table. User profile CRUD lives in userService.
+ */
+
 import { supabaseAdmin, supabaseAnon } from '../config/supabase';
-import jwt from 'jsonwebtoken';
-import { config } from '../config';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface LoginResult {
   accessToken: string;
@@ -15,16 +22,12 @@ export interface LoginResult {
   };
 }
 
-/**
- * Login with email and password using Supabase Auth.
- * Returns JWT and user profile.
- */
+// ─── login ───────────────────────────────────────────────────────────────────
+
 export async function login(email: string, password: string): Promise<LoginResult | null> {
   const { data, error } = await supabaseAnon.auth.signInWithPassword({ email, password });
 
-  if (error || !data.session || !data.user) {
-    return null;
-  }
+  if (error || !data.session || !data.user) return null;
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
@@ -32,19 +35,13 @@ export async function login(email: string, password: string): Promise<LoginResul
     .eq('id', data.user.id)
     .single();
 
-  if (profileError) {
-    throw new Error(`Perfil: ${profileError.message}`);
-  }
+  if (profileError) throw new Error(`Perfil: ${profileError.message}`);
+  if (!profile) return null;
 
-  if (!profile) {
-    return null;
-  }
-
-  const courseId = profile.course_id
-    ?? (profile.cohorts as { course_id?: string } | null)?.course_id
-    ?? null;
-
-  const instructorId = (profile as { instructor_id?: string | null }).instructor_id ?? null;
+  const courseId =
+    profile.course_id ??
+    (profile.cohorts as { course_id?: string } | null)?.course_id ??
+    null;
 
   return {
     accessToken: data.session.access_token,
@@ -55,15 +52,13 @@ export async function login(email: string, password: string): Promise<LoginResul
       fullName: profile.full_name || '',
       role: profile.role,
       courseId,
-      instructorId,
+      instructorId: (profile as { instructor_id?: string | null }).instructor_id ?? null,
     },
   };
 }
 
-/**
- * Crea usuario de acceso (auth + user_profiles) para un instructor existente.
- * Permite al instructor iniciar sesión y ver solo el cuadro semanal.
- */
+// ─── createInstructorWithLogin ───────────────────────────────────────────────
+
 export async function createInstructorWithLogin(params: {
   instructorId: string;
   email: string;
@@ -97,12 +92,11 @@ export async function createInstructorWithLogin(params: {
   return { userId: authData.user.id };
 }
 
-/**
- * Actualiza la contraseña del usuario asociado a un instructor (por instructor_id).
- */
+// ─── updateInstructorPassword ────────────────────────────────────────────────
+
 export async function updateInstructorPassword(
   instructorId: string,
-  newPassword: string
+  newPassword: string,
 ): Promise<{ error?: string }> {
   const { data: profile } = await supabaseAdmin
     .from('user_profiles')
@@ -111,427 +105,12 @@ export async function updateInstructorPassword(
     .eq('role', 'instructor')
     .maybeSingle();
 
-  if (!profile) {
-    return { error: 'No existe cuenta de acceso para este instructor' };
-  }
+  if (!profile) return { error: 'No existe cuenta de acceso para este instructor' };
 
-  const { error } = await supabaseAdmin.auth.admin.updateUserById((profile as { id: string }).id, {
-    password: newPassword,
-  });
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(
+    (profile as { id: string }).id,
+    { password: newPassword },
+  );
   if (error) return { error: error.message };
-  return {};
-}
-
-/**
- * Create user via Supabase Admin API and insert profile.
- */
-export async function createUser(params: {
-  email: string;
-  password: string;
-  fullName: string;
-  role: 'admin' | 'student';
-  courseId?: string | null;
-  cohortId?: string | null;
-  courseNumber?: string | null;
-  cedula?: string | null;
-  scheduleId?: string | null;
-  instructorId?: string | null;
-  dayOfWeek?: number | null;
-  startTime?: string | null;
-  scheduleType?: 'weekdays' | 'weekends' | null;
-  practiceWeeks?: 1 | 2 | 3 | null;
-  practiceHoursPerDay?: number; // 1-4, por defecto 1
-  practiceStartDate?: string | null;
-  practiceEndDate?: string | null;
-  gender?: string | null;
-  citizenship?: string | null;
-  bloodType?: string | null;
-  birthDate?: string | null;
-  address?: string | null;
-  phone?: string | null;
-  startDate?: string | null;
-  endDate?: string | null;
-  modality?: string | null;
-  initialPaymentAmount?: number | null;
-  discountApplied?: number | null;
-  discountNote?: string | null;
-  createdBy?: string | null;
-  mustChangePassword?: boolean;
-}): Promise<{ userId: string; error?: string }> {
-  const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-    email: params.email,
-    password: params.password,
-    email_confirm: true,
-    user_metadata: {
-      full_name: params.fullName,
-    },
-  });
-
-  if (authError || !authData.user) {
-    return { userId: '', error: authError?.message || 'Failed to create user' };
-  }
-
-  let courseId: string | null = null;
-  let cohortId: string | null = null;
-  let cohortStartDate: string | null = null;
-  let cohortEndDate: string | null = null;
-  if (params.role === 'student') {
-    if (params.cohortId) {
-      cohortId = params.cohortId;
-      const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id, start_date, end_date').eq('id', params.cohortId).single();
-      courseId = cohort?.course_id ?? null;
-      if (cohort) {
-        cohortStartDate = cohort.start_date ? String(cohort.start_date).slice(0, 10) : null;
-        cohortEndDate = cohort.end_date ? String(cohort.end_date).slice(0, 10) : null;
-      }
-    } else if (params.courseId && params.courseNumber) {
-      const { getOrCreateCohort } = await import('./adminService');
-      const cohort = await getOrCreateCohort(params.courseId, params.courseNumber);
-      cohortId = cohort.id;
-      courseId = cohort.course_id;
-      const { data: co } = await supabaseAdmin.from('cohorts').select('start_date, end_date').eq('id', cohort.id).single();
-      if (co) {
-        cohortStartDate = co.start_date ? String(co.start_date).slice(0, 10) : null;
-        cohortEndDate = co.end_date ? String(co.end_date).slice(0, 10) : null;
-      }
-    } else {
-      courseId = params.courseId ?? null;
-    }
-  }
-
-  let scheduleId: string | null = params.role === 'student' ? (params.scheduleId || null) : null;
-  if (params.role === 'student' && cohortId && !scheduleId && params.instructorId && params.startTime) {
-    const startTimeNorm = typeof params.startTime === 'string' ? params.startTime.slice(0, 5) : params.startTime;
-    const hoursPerDay = Math.min(4, Math.max(1, params.practiceHoursPerDay ?? 1));
-    if (params.scheduleType === 'weekdays' || params.scheduleType === 'weekends') {
-      try {
-        const { getOrCreateScheduleGroup, getAvailableStartTimes } = await import('./scheduleService');
-        const available = await getAvailableStartTimes(cohortId, params.instructorId, params.scheduleType, hoursPerDay, null);
-        const isAvailable = available.some((s) => s.start_time === startTimeNorm);
-        if (!isAvailable) {
-          await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-          return { userId: '', error: 'El horario seleccionado no está disponible. Elige otra hora o duración.' };
-        }
-        const { firstSlotId } = await getOrCreateScheduleGroup({
-          cohortId,
-          instructorId: params.instructorId,
-          type: params.scheduleType,
-          startTime: startTimeNorm,
-          hoursPerDay,
-        });
-        scheduleId = firstSlotId;
-      } catch (err) {
-        const { getOrCreateCourseSchedule } = await import('./scheduleService');
-        const firstDay = params.scheduleType === 'weekends' ? 6 : 1;
-        const schedule = await getOrCreateCourseSchedule({
-          cohortId,
-          instructorId: params.instructorId,
-          dayOfWeek: firstDay,
-          startTime: startTimeNorm,
-        });
-        scheduleId = schedule.id;
-      }
-    } else if (params.dayOfWeek != null && params.dayOfWeek >= 1 && params.dayOfWeek <= 7) {
-      const { getOrCreateCourseSchedule } = await import('./scheduleService');
-      const schedule = await getOrCreateCourseSchedule({
-        cohortId,
-        instructorId: params.instructorId,
-        dayOfWeek: params.dayOfWeek,
-        startTime: startTimeNorm,
-      });
-      scheduleId = schedule.id;
-    }
-  }
-
-  let totalAmount: number | null = null;
-  let amountPaid = 0;
-  let originalPrice: number | null = null;
-  let discountApplied = 0;
-  if (params.role === 'student' && courseId) {
-    const { data: course, error: courseErr } = await supabaseAdmin.from('courses').select('price').eq('id', courseId).single();
-    const price = !courseErr && course?.price != null ? Number(course.price) : 0;
-    originalPrice = price;
-    const discount = params.discountApplied != null ? Math.max(0, Number(params.discountApplied)) : 0;
-    discountApplied = Math.min(discount, price);
-    totalAmount = Math.max(0, price - discountApplied);
-    const initial = params.initialPaymentAmount != null ? Number(params.initialPaymentAmount) : 0;
-    if (initial > 0 && totalAmount != null && totalAmount > 0) {
-      amountPaid = Math.min(initial, totalAmount);
-    }
-  }
-
-  const practiceWeeksVal = params.role === 'student' && (params.practiceWeeks === 1 || params.practiceWeeks === 2 || params.practiceWeeks === 3) ? params.practiceWeeks : null;
-  let practiceStartDate = params.practiceStartDate?.trim() || null;
-  let practiceEndDate = params.practiceEndDate?.trim() || null;
-  if (params.role === 'student' && !practiceStartDate && params.startDate?.trim()) practiceStartDate = params.startDate.trim();
-  if (params.role === 'student' && !practiceEndDate && practiceStartDate && practiceWeeksVal) {
-    const start = new Date(practiceStartDate);
-    start.setDate(start.getDate() + practiceWeeksVal * 7 - 1);
-    practiceEndDate = start.toISOString().slice(0, 10);
-  }
-  const profileRow: Record<string, unknown> = {
-    id: authData.user.id,
-    email: params.email,
-    full_name: params.fullName,
-    role: params.role,
-    course_id: courseId,
-    cohort_id: cohortId,
-    cedula: params.cedula?.trim() || null,
-    schedule_id: scheduleId,
-    gender: params.gender === 'masculino' || params.gender === 'femenino' ? params.gender : null,
-    citizenship: params.citizenship?.trim() || null,
-    blood_type: params.bloodType?.trim() || null,
-    birth_date: params.birthDate?.trim() || null,
-    address: params.address?.trim() || null,
-    phone: params.phone?.trim() || null,
-    start_date: (params.startDate?.trim() || cohortStartDate) || null,
-    end_date: (params.endDate?.trim() || cohortEndDate) || null,
-    modality: params.modality?.trim() || null,
-    total_amount: totalAmount,
-    amount_paid: amountPaid,
-    must_change_password: params.mustChangePassword ?? true,
-  };
-  if (params.role === 'student' && originalPrice != null) profileRow.original_price = originalPrice;
-  if (params.role === 'student') profileRow.discount_applied = discountApplied;
-  if (params.role === 'student' && discountApplied > 0 && params.discountNote?.trim()) profileRow.discount_note = params.discountNote.trim();
-  if (practiceWeeksVal != null) profileRow.practice_weeks = practiceWeeksVal;
-  const hoursPerDayVal = params.role === 'student' && params.practiceHoursPerDay != null
-    ? Math.min(4, Math.max(1, params.practiceHoursPerDay))
-    : 1;
-  if (params.role === 'student') profileRow.practice_hours_per_day = hoursPerDayVal;
-  if (practiceStartDate) profileRow.practice_start_date = practiceStartDate;
-  if (practiceEndDate) profileRow.practice_end_date = practiceEndDate;
-
-  const { error: profileError } = await supabaseAdmin.from('user_profiles').insert(profileRow);
-  if (profileError) {
-    if (/practice_weeks|practice_start_date|practice_end_date|gender|practice_hours_per_day|column.*does not exist/i.test(profileError.message)) {
-      delete profileRow.practice_weeks;
-      delete profileRow.practice_start_date;
-      delete profileRow.practice_end_date;
-      delete profileRow.gender;
-      delete profileRow.practice_hours_per_day;
-      const { error: retryError } = await supabaseAdmin.from('user_profiles').insert(profileRow);
-      if (retryError) {
-        await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-        return { userId: '', error: retryError.message };
-      }
-    } else {
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-      return { userId: '', error: profileError.message };
-    }
-  }
-
-  if (params.role === 'student' && amountPaid > 0) {
-    const paymentNote = discountApplied > 0
-      ? `Pago inicial al inscribir (descuento aplicado: $${discountApplied.toFixed(2)})`
-      : 'Pago inicial al inscribir';
-    const paymentRow: Record<string, unknown> = {
-      user_id: authData.user.id,
-      amount: amountPaid,
-      note: paymentNote,
-      created_by: params.createdBy ?? null,
-    };
-    if (discountApplied > 0) paymentRow.discount_applied = discountApplied;
-    await supabaseAdmin.from('payments').insert(paymentRow);
-  }
-
-  return { userId: authData.user.id };
-}
-
-/**
- * Delete user: remove all related data (horario, overrides, profile) and then auth user.
- */
-export async function deleteUser(userId: string): Promise<{ error?: string }> {
-  // 1) Quitar overrides de horario por día (relación usuario ↔ course_schedule por día)
-  await supabaseAdmin.from('user_schedule_day_override').delete().eq('user_id', userId);
-
-  // 2) Borrar perfil (quita la relación con schedule_id y el resto de datos del alumno)
-  const { error: profileErr } = await supabaseAdmin.from('user_profiles').delete().eq('id', userId);
-  if (profileErr) return { error: profileErr.message };
-
-  // 3) Borrar usuario en Auth (payments, attendance, etc. se eliminan por CASCADE si está configurado)
-  const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
-  if (error) return { error: error.message };
-  return {};
-}
-
-/**
- * Update user profile and optionally password.
- */
-export async function updateUserProfile(
-  userId: string,
-  params: {
-    fullName?: string;
-    role?: 'admin' | 'student';
-    courseId?: string | null;
-    cohortId?: string | null;
-    courseNumber?: string | null;
-    cedula?: string | null;
-    scheduleId?: string | null;
-    instructorId?: string | null;
-    dayOfWeek?: number | null;
-    startTime?: string | null;
-    scheduleType?: 'weekdays' | 'weekends' | null;
-    practiceWeeks?: 1 | 2 | 3 | null;
-    practiceHoursPerDay?: number | null;
-    citizenship?: string | null;
-    bloodType?: string | null;
-    birthDate?: string | null;
-    address?: string | null;
-    phone?: string | null;
-    startDate?: string | null;
-    endDate?: string | null;
-    modality?: string | null;
-    practiceStartDate?: string | null;
-    practiceEndDate?: string | null;
-    gender?: string | null;
-    password?: string;
-  }
-): Promise<{ error?: string }> {
-  if (params.password !== undefined) {
-    const { error: pwError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      password: params.password,
-      ...(params.fullName !== undefined && { user_metadata: { full_name: params.fullName } }),
-    });
-    if (pwError) return { error: pwError.message };
-  } else if (params.fullName !== undefined) {
-    const { error: metaError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      user_metadata: { full_name: params.fullName },
-    });
-    if (metaError) return { error: metaError.message };
-  }
-
-  const update: Record<string, unknown> = {};
-  if (params.fullName !== undefined) update.full_name = params.fullName;
-  if (params.role !== undefined) {
-    update.role = params.role;
-    if (params.role === 'admin') {
-      update.course_id = null;
-      update.cohort_id = null;
-      update.schedule_id = null;
-    } else if (params.role === 'student' && (params.courseId !== undefined || params.cohortId !== undefined)) {
-      if (params.cohortId) {
-        const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id, start_date, end_date').eq('id', params.cohortId).single();
-        update.course_id = cohort?.course_id ?? null;
-        update.cohort_id = params.cohortId;
-        if (cohort && params.startDate === undefined && params.endDate === undefined) {
-          update.start_date = cohort.start_date ? String(cohort.start_date).slice(0, 10) : null;
-          update.end_date = cohort.end_date ? String(cohort.end_date).slice(0, 10) : null;
-        }
-      } else {
-        update.course_id = params.courseId ?? null;
-        update.cohort_id = null;
-      }
-    }
-  }
-  if (params.cedula !== undefined) {
-    update.cedula = params.cedula?.trim() || null;
-  }
-  if (params.gender !== undefined) {
-    update.gender = params.gender === 'masculino' || params.gender === 'femenino' ? params.gender : null;
-  }
-  if (params.scheduleId !== undefined) {
-    update.schedule_id = params.scheduleId ?? null;
-  }
-  if (params.practiceWeeks !== undefined) {
-    update.practice_weeks = params.practiceWeeks === 1 || params.practiceWeeks === 2 || params.practiceWeeks === 3 ? params.practiceWeeks : null;
-  }
-  if (params.practiceHoursPerDay !== undefined) {
-    update.practice_hours_per_day = params.practiceHoursPerDay != null && params.practiceHoursPerDay >= 1 && params.practiceHoursPerDay <= 4 ? params.practiceHoursPerDay : 1;
-  }
-  if (params.instructorId != null && params.startTime && params.cohortId) {
-    const cohortId = params.cohortId;
-    const startTime = typeof params.startTime === 'string' && params.startTime.length >= 5 ? params.startTime.slice(0, 5) : params.startTime;
-    const hoursPerDay = Math.min(4, Math.max(1, params.practiceHoursPerDay ?? 1));
-    const { data: currentProfile } = await supabaseAdmin.from('user_profiles').select('schedule_id').eq('id', userId).single();
-    const currentScheduleId = (currentProfile as { schedule_id?: string | null } | null)?.schedule_id ?? null;
-    if (params.scheduleType === 'weekdays' || params.scheduleType === 'weekends') {
-      const { getOrCreateScheduleGroup, getAvailableStartTimes } = await import('./scheduleService');
-      const available = await getAvailableStartTimes(cohortId, params.instructorId, params.scheduleType, hoursPerDay, currentScheduleId);
-      const isAvailable = available.some((s) => s.start_time === startTime);
-      if (!isAvailable) return { error: 'El horario seleccionado no está disponible. Elige otra hora o duración.' };
-      const { firstSlotId } = await getOrCreateScheduleGroup({
-        cohortId,
-        instructorId: params.instructorId,
-        type: params.scheduleType,
-        startTime,
-        hoursPerDay,
-      });
-      update.schedule_id = firstSlotId;
-      update._oldScheduleIdForCleanup = currentScheduleId;
-      await supabaseAdmin.from('user_schedule_day_override').delete().eq('user_id', userId);
-    } else if (params.dayOfWeek != null) {
-      const { getOrCreateCourseSchedule, getAvailableSlots } = await import('./scheduleService');
-      const available = await getAvailableSlots(cohortId, params.instructorId, currentScheduleId);
-      const slotKey = `${params.dayOfWeek}-${startTime}`;
-      const isAvailable = available.some((s) => {
-        const t = typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : s.start_time;
-        return `${s.day_of_week}-${t}` === slotKey;
-      });
-      if (!isAvailable) return { error: 'Ese horario no está disponible. Elige otro día, hora o instructor.' };
-      const schedule = await getOrCreateCourseSchedule({
-        cohortId,
-        instructorId: params.instructorId,
-        dayOfWeek: params.dayOfWeek,
-        startTime,
-      });
-      update.schedule_id = schedule.id;
-      update._oldScheduleIdForCleanup = currentScheduleId;
-    }
-  }
-  if (params.citizenship !== undefined) {
-    update.citizenship = params.citizenship?.trim() || null;
-  }
-  if (params.bloodType !== undefined) {
-    update.blood_type = params.bloodType?.trim() || null;
-  }
-  if (params.birthDate !== undefined) update.birth_date = params.birthDate?.trim() || null;
-  if (params.address !== undefined) update.address = params.address?.trim() || null;
-  if (params.phone !== undefined) update.phone = params.phone?.trim() || null;
-  if (params.startDate !== undefined) update.start_date = params.startDate?.trim() || null;
-  if (params.endDate !== undefined) update.end_date = params.endDate?.trim() || null;
-  if (params.modality !== undefined) update.modality = params.modality?.trim() || null;
-  if (params.practiceStartDate !== undefined) update.practice_start_date = params.practiceStartDate?.trim() || null;
-  if (params.practiceEndDate !== undefined) update.practice_end_date = params.practiceEndDate?.trim() || null;
-  if (params.courseId !== undefined || params.cohortId !== undefined || params.courseNumber !== undefined) {
-    if (params.cohortId) {
-      const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id, start_date, end_date').eq('id', params.cohortId).single();
-      update.course_id = cohort?.course_id ?? null;
-      update.cohort_id = params.cohortId;
-      if (cohort && params.startDate === undefined && params.endDate === undefined) {
-        update.start_date = cohort.start_date ? String(cohort.start_date).slice(0, 10) : null;
-        update.end_date = cohort.end_date ? String(cohort.end_date).slice(0, 10) : null;
-      }
-    } else if (params.courseId && params.courseNumber && String(params.courseNumber).trim()) {
-      const { getOrCreateCohort } = await import('./adminService');
-      const cohort = await getOrCreateCohort(params.courseId, String(params.courseNumber).trim());
-      update.course_id = cohort.course_id;
-      update.cohort_id = cohort.id;
-      const { data: co } = await supabaseAdmin.from('cohorts').select('start_date, end_date').eq('id', cohort.id).single();
-      if (co && params.startDate === undefined && params.endDate === undefined) {
-        update.start_date = co.start_date ? String(co.start_date).slice(0, 10) : null;
-        update.end_date = co.end_date ? String(co.end_date).slice(0, 10) : null;
-      }
-    } else {
-      update.course_id = params.courseId ?? null;
-      update.cohort_id = null;
-      update.schedule_id = null;
-    }
-  }
-
-  const oldScheduleIdForCleanup = update._oldScheduleIdForCleanup as string | null | undefined;
-  delete update._oldScheduleIdForCleanup;
-
-  if (Object.keys(update).length > 0) {
-    const { error } = await supabaseAdmin.from('user_profiles').update(update).eq('id', userId);
-    if (error) return { error: error.message };
-  }
-
-  if (oldScheduleIdForCleanup) {
-    const { data: remaining } = await supabaseAdmin.from('user_profiles').select('id').eq('schedule_id', oldScheduleIdForCleanup).limit(1);
-    if (!remaining?.length) {
-      await supabaseAdmin.from('course_schedules').delete().eq('id', oldScheduleIdForCleanup);
-    }
-  }
   return {};
 }

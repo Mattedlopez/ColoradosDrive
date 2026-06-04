@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '../config/supabase';
-import { deleteUser as deleteAuthUser } from '../services/authService';
+import { deleteUser as deleteAuthUser } from '../services/userService';
 
 export async function createSubject(courseId: string, name: string, orderIndex = 0) {
   const { data, error } = await supabaseAdmin

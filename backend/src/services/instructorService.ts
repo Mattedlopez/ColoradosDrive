@@ -108,7 +108,7 @@ export async function deleteInstructor(id: string) {
     .maybeSingle();
 
   if (profile) {
-    const { deleteUser } = await import('./authService');
+    const { deleteUser } = await import('./userService');
     await deleteUser((profile as { id: string }).id);
   }
 

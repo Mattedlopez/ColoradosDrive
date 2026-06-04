@@ -3,7 +3,8 @@ import { body, param, validationResult } from 'express-validator';
 import { authMiddleware } from '../middleware/auth';
 import { requireAdmin } from '../middleware/rbac';
 import { uploadSingle } from '../middleware/upload';
-import { createUser, deleteUser, updateUserProfile } from '../services/authService';
+import { createUser, deleteUser, updateUserProfile } from '../services/userService';
+import { handleValidation } from '../middleware/validate';
 import * as adminService from '../services/adminService';
 import * as examService from '../services/examService';
 import * as instructorService from '../services/instructorService';
@@ -52,13 +53,8 @@ router.post(
     body('discountApplied').optional(optionalFalsy).isFloat({ min: 0 }),
     body('discountNote').optional(optionalFalsy).trim().isString().isLength({ max: 500 }),
   ],
+  handleValidation,
   async (req: AuthenticatedRequest, res: Response) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-      return;
-    }
-
     const { email, password, fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, practiceHoursPerDay: practiceHoursPerDayRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, initialPaymentAmount, discountApplied, discountNote } = req.body;
     const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
     const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : null;
@@ -120,12 +116,7 @@ router.get('/users', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-router.get('/users/:id/activity', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    res.status(400).json({ errors: errors.array() });
-    return;
-  }
+router.get('/users/:id/activity', [param('id').isUUID()], handleValidation, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { getActivity } = await import('../services/activityService');
     const activity = await getActivity(req.params.id);
@@ -135,12 +126,7 @@ router.get('/users/:id/activity', [param('id').isUUID()], async (req: Authentica
   }
 });
 
-router.delete('/users/:id', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    res.status(400).json({ errors: errors.array() });
-    return;
-  }
+router.delete('/users/:id', [param('id').isUUID()], handleValidation, async (req: AuthenticatedRequest, res: Response) => {
   const result = await deleteUser(req.params.id);
   if (result.error) {
     res.status(400).json({ error: result.error });
@@ -177,12 +163,8 @@ router.patch(
     body('modality').optional().trim().isString().isIn(['intensivo', 'regular', 'fin de semana']),
     body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   ],
+  handleValidation,
   async (req: AuthenticatedRequest, res: Response) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-      return;
-    }
     const { fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, practiceHoursPerDay: practiceHoursPerDayRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, password } = req.body;
     const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
     const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : undefined;
@@ -239,12 +221,7 @@ router.get('/schedule-groups', async (req: AuthenticatedRequest, res: Response) 
   }
 });
 
-router.get('/users/:id/schedule-display', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    res.status(400).json({ errors: errors.array() });
-    return;
-  }
+router.get('/users/:id/schedule-display', [param('id').isUUID()], handleValidation, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const display = await scheduleService.getStudentScheduleDisplay(req.params.id);
     res.json(display || { type: 'single', label: 'Sin horario', practiceWeeks: null, slots: [], overrides: [] });
@@ -256,12 +233,8 @@ router.get('/users/:id/schedule-display', [param('id').isUUID()], async (req: Au
 router.post(
   '/users/:id/schedule-rest',
   [param('id').isUUID(), body('cohortId').optional().isUUID(), body('instructorId').optional().isUUID(), body('type').optional().isIn(['weekdays', 'weekends']), body('startTime').optional().matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/), body('scheduleId').optional().isUUID()],
+  handleValidation,
   async (req: AuthenticatedRequest, res: Response) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-      return;
-    }
     const { cohortId, instructorId, type, startTime, scheduleId } = req.body;
     if (scheduleId) {
       const result = await scheduleService.setStudentScheduleRestOfCourse(req.params.id, { scheduleId });

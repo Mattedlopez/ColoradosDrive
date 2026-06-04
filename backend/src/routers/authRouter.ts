@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { body, validationResult } from 'express-validator';
+import { body } from 'express-validator';
 import { login } from '../services/authService';
 import { authMiddleware } from '../middleware/auth';
+import { handleValidation } from '../middleware/validate';
 import { AuthenticatedRequest } from '../types';
 
 const router = Router();
@@ -12,27 +13,20 @@ router.post(
     body('email').isEmail().normalizeEmail().withMessage('Correo electrónico no válido'),
     body('password').notEmpty().withMessage('La contraseña es requerida'),
   ],
+  handleValidation,
   async (req: Request, res: Response) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      const firstMsg = errors.array()[0]?.msg || 'Revisa los datos';
-      return res.status(400).json({ error: firstMsg });
-    }
-
     const { email, password } = req.body;
     try {
       const result = await login(email, password);
-
       if (!result) {
         return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
       }
-
       return res.json(result);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Error al iniciar sesión';
       return res.status(500).json({ error: message });
     }
-  }
+  },
 );
 
 router.get('/me', authMiddleware, (req: AuthenticatedRequest, res: Response) => {

@@ -1,60 +1,85 @@
-# Colorados Drive - Plataforma Escuela de Conducción
+# Colorados Drive — Plataforma de Escuela de Conducción
 
-Plataforma web para la escuela de conducción **Colorados Drive** en Santo Domingo, Ecuador.
+Plataforma web completa para la gestión de la escuela de conducción **Colorados Drive** en Santo Domingo, Ecuador.
 
-## Arquitectura
+Incluye panel de administración, portal de estudiantes, portal de instructores, módulo de exámenes, control de asistencia, caja y reportes.
 
-- **Backend**: Node.js + Express + TypeScript
-- **Base de datos**: Supabase (PostgreSQL)
-- **Auth**: Supabase Auth (JWT)
-- **Frontend**: (pendiente - Next.js recomendado)
+---
 
-Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el diseño completo.
+## Stack
+
+| Capa | Tecnología |
+|------|-----------|
+| Frontend | Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 |
+| Backend | Node.js 20 · Express 4 · TypeScript |
+| Base de datos | Supabase (PostgreSQL + Auth + RLS) |
+| Autenticación | Supabase Auth (JWT) |
+| Animaciones | Framer Motion |
+| Gráficas | Recharts |
+| Exportes | PDFKit · ExcelJS · Archiver |
+
+---
 
 ## Requisitos
 
-- Node.js 18+
-- Cuenta en [Supabase](https://supabase.com)
+- **Node.js** 20 o superior
+- **npm** 9+
+- Cuenta en [Supabase](https://supabase.com) (plan Free es suficiente)
 
-## Desarrollo local (dos terminales)
+---
 
-Para que el login y la API funcionen, **necesitas dos terminales**:
+## Instalación y desarrollo local
 
-1. **Terminal 1 – Backend** (puerto **3001**):
-   ```bash
-   cd backend
-   npm install
-   # Crea backend/.env con SUPABASE_*, JWT_SECRET, etc.
-   npm run dev
-   ```
-   Debe aparecer: `Colorados Drive API running on port 3001`
+Necesitas **dos terminales** abiertas en paralelo.
 
-2. **Terminal 2 – Frontend** (puerto **3000**, o el que indique Next.js si 3000 está ocupado):
-   ```bash
-   cd frontend
-   npm install
-   cp env.example .env.local
-   npm run dev
-   ```
-   Abre la URL que imprima Next.js (por defecto http://localhost:3000).
+### 1 — Clonar el repositorio
 
-3. El frontend llama al API en **http://localhost:3001** (controlado por `NEXT_PUBLIC_API_URL`). Si ves "Error al iniciar sesión" o "No se pudo conectar", asegúrate de que el **backend esté corriendo en la terminal 1**.
+```bash
+git clone https://github.com/tu-usuario/colorados-drive-platform.git
+cd colorados-drive-platform
+```
 
-## Configuración
+### 2 — Configurar la base de datos (Supabase)
 
-### 1. Supabase
-
-1. Crea un proyecto en [Supabase](https://supabase.com/dashboard).
-2. En **SQL Editor**, ejecuta el contenido de `backend/src/db/schema.sql`.
-3. En **Settings > API**, copia:
+1. Crea un proyecto nuevo en [supabase.com/dashboard](https://supabase.com/dashboard).
+2. Ve a **SQL Editor** y ejecuta `backend/src/db/schema.sql` para crear todas las tablas.
+3. En **Settings › API** copia:
    - Project URL
-   - anon (public) key
-   - service_role key
-4. En **Settings > API > JWT Settings**, copia el **JWT Secret**.
+   - `anon` public key
+   - `service_role` key
+4. En **Settings › API › JWT Settings** copia el **JWT Secret**.
 
-### 2. Variables de entorno
+### 3 — Backend
 
-Crear `backend/.env`:
+```bash
+cd backend
+npm install
+cp .env.example .env      # edita con tus valores de Supabase
+npm run dev               # → http://localhost:3001
+```
+
+Deberías ver: `Colorados Drive API running on port 3001`
+
+Carga el seed inicial de cursos (solo la primera vez):
+
+```bash
+npm run db:seed
+```
+
+### 4 — Frontend
+
+```bash
+cd frontend
+npm install
+cp env.example .env.local  # edita NEXT_PUBLIC_API_URL=http://localhost:3001
+npm run dev                # → http://localhost:3000
+```
+
+---
+
+## Variables de entorno
+
+### Backend — `backend/.env`
 
 ```env
 PORT=3001
@@ -65,138 +90,227 @@ SUPABASE_ANON_KEY=tu-anon-key
 SUPABASE_SERVICE_KEY=tu-service-role-key
 SUPABASE_JWT_SECRET=tu-jwt-secret
 
-JWT_SECRET=tu-jwt-secret
+JWT_SECRET=tu-jwt-secret          # mismo valor que SUPABASE_JWT_SECRET
+CORS_ORIGIN=http://localhost:3000  # en producción: URL pública del frontend
 ```
 
-> Usa el mismo valor para `SUPABASE_JWT_SECRET` y `JWT_SECRET` (el JWT Secret de Supabase).
+### Frontend — `frontend/.env.local`
 
-### 3. Crear admin inicial
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001
+```
 
-1. En Supabase **Authentication > Users**, crea un usuario (o usa la consola).
-2. Copia el `id` (UUID) del usuario.
-3. En **SQL Editor**:
+En producción (Vercel) reemplaza con la URL pública del backend.
+
+---
+
+## Estructura del proyecto
+
+```
+colorados-drive-platform/
+├── .github/
+│   └── workflows/
+│       └── ci.yml              ← GitHub Actions: type-check + tests en cada PR
+├── backend/
+│   └── src/
+│       ├── config/             ← config.ts (env), supabase.ts (clientes)
+│       ├── db/                 ← schema.sql, seed.ts, migrations/
+│       ├── middleware/
+│       │   ├── auth.ts         ← verifica JWT con Supabase Admin API
+│       │   ├── rbac.ts         ← requireRole() — Strategy Pattern
+│       │   └── validate.ts     ← handleValidation — middleware DRY
+│       ├── repositories/
+│       │   ├── interfaces/
+│       │   │   └── IUserRepository.ts   ← contrato (DIP)
+│       │   └── SupabaseUserRepository.ts
+│       ├── routers/
+│       │   ├── authRouter.ts
+│       │   ├── adminRouter.ts
+│       │   ├── studentRouter.ts
+│       │   └── instructorRouter.ts
+│       ├── services/
+│       │   ├── authService.ts   ← login, tokens (SRP: solo auth)
+│       │   ├── userService.ts   ← createUser, updateUserProfile, deleteUser
+│       │   ├── adminService.ts
+│       │   ├── examService.ts
+│       │   ├── scheduleService.ts
+│       │   ├── paymentService.ts
+│       │   ├── attendanceService.ts
+│       │   ├── cashService.ts
+│       │   ├── notificationService.ts
+│       │   ├── reportService.ts
+│       │   ├── downloadsService.ts
+│       │   ├── activityService.ts
+│       │   └── uploadService.ts
+│       ├── types/
+│       │   └── index.ts         ← AuthUser, AuthenticatedRequest, UserRole
+│       └── __tests__/
+│           └── userService.test.ts
+├── frontend/
+│   └── src/
+│       ├── app/                 ← Next.js App Router (admin/, student/, instructor/)
+│       ├── components/
+│       ├── contexts/            ← AuthContext.tsx
+│       └── lib/                 ← api.ts, env.ts, theme.ts
+└── docs/
+    ├── ARCHITECTURE.md
+    └── DEPLOYMENT.md
+```
+
+---
+
+## Crear el primer usuario admin
+
+En Supabase **SQL Editor**:
 
 ```sql
-INSERT INTO user_profiles (id, email, full_name, role, course_id)
+-- Primero crea el usuario en Authentication > Users (o usa Admin API)
+-- Luego inserta su perfil:
+INSERT INTO user_profiles (id, email, full_name, role)
 VALUES (
-  'UUID-del-usuario',
+  'UUID-copiado-de-auth-users',
   'admin@coloradosdrive.com',
   'Administrador',
-  'admin',
-  NULL
+  'admin'
 );
 ```
 
-O usa Supabase Auth Admin desde la consola del proyecto.
+---
 
-### 4. Seed de cursos
+## Roles
 
-```bash
-cd backend
-npm install
-npm run db:seed
-```
+| Rol | Acceso |
+|-----|--------|
+| `admin` | Panel completo: usuarios, cursos, exámenes, caja, reportes |
+| `student` | Portal propio: materias, exámenes, progreso, notificaciones |
+| `instructor` | Solo su cuadro semanal y lista de alumnos por slot |
 
-Esto crea los cursos **Curso Tipo A (MOTO)** y **Curso Tipo B (AUTO)**.
+---
 
-### 5. Frontend
-
-```bash
-cd frontend
-cp env.example .env.local
-npm install
-npm run dev
-```
-
-Abre http://localhost:3000
-
-## Comandos
-
-```bash
-cd backend
-
-# Desarrollo
-npm run dev
-
-# Build
-npm run build
-
-# Producción
-npm start
-```
-
-## API Endpoints
+## API — Endpoints principales
 
 ### Auth
-- `POST /api/auth/login` - Login (email, password)
-- `GET /api/auth/me` - Usuario actual (Bearer token)
 
-### Admin (requiere rol admin)
-- `POST /api/admin/users` - Crear usuario
-- `GET /api/admin/users` - Listar usuarios
-- `GET /api/admin/users/:id/activity` - Actividad de usuario
-- `GET /api/admin/courses` - Listar cursos
-- `POST /api/admin/subjects` - Crear materia
-- `GET /api/admin/subjects` - Listar materias
-- `POST /api/admin/contents` - Crear contenido
-- `POST /api/admin/exams` - Crear examen
-- `POST /api/admin/exams/:id/questions` - Agregar pregunta
-- `GET /api/admin/exams` - Listar exámenes
-- `GET /api/admin/exams/:id/results` - Resultados por examen
-- `GET /api/admin/users/:id/exam-results` - Resultados de un usuario
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/auth/login` | Login (email + password) |
+| GET | `/api/auth/me` | Usuario actual (Bearer token) |
 
-### Student (requiere rol student)
-- `GET /api/student/course` - Mi curso
-- `GET /api/student/subjects` - Materias de mi curso
-- `GET /api/student/subjects/:id/contents` - Contenido de una materia
-- `POST /api/student/activity` - Registrar actividad
-- `GET /api/student/exams` - Exámenes disponibles
-- `POST /api/student/exams/:id/start` - Iniciar examen (retorna preguntas)
-- `POST /api/student/attempts/:attemptId/submit` - Enviar respuestas
-- `GET /api/student/attempts/:attemptId/result` - Ver resultado
-- `GET /api/student/progress` - Progreso general
+### Admin `[requiere rol admin]`
 
-## 🚀 Despliegue
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/admin/users` | Crear usuario (admin o estudiante) |
+| GET | `/api/admin/users` | Listar usuarios (filtros: courseId, cohortId, role, search) |
+| PATCH | `/api/admin/users/:id` | Actualizar perfil / contraseña |
+| DELETE | `/api/admin/users/:id` | Eliminar usuario |
+| GET | `/api/admin/courses` | Listar cursos |
+| GET/POST | `/api/admin/subjects` | Materias |
+| GET/POST | `/api/admin/contents` | Contenido por materia |
+| GET/POST | `/api/admin/exams` | Exámenes |
+| GET/POST | `/api/admin/exams/:id/questions` | Preguntas de examen |
+| GET | `/api/admin/attendance` | Asistencia por cohorte |
+| POST | `/api/admin/notifications` | Enviar notificación |
+| GET/POST | `/api/admin/caja/*` | Caja: sesiones y movimientos |
+| GET | `/api/admin/downloads/*` | Exportar PDF/Excel |
 
-### Opción Recomendada: Vercel + Railway + Supabase
+### Student `[requiere rol student]`
 
-**Costo:** $0/mes (gratis para empezar)
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/student/course` | Mi curso asignado |
+| GET | `/api/student/subjects` | Materias del curso |
+| GET | `/api/student/subjects/:id/contents` | Contenido de una materia |
+| GET | `/api/student/exams` | Exámenes disponibles |
+| POST | `/api/student/exams/:id/attempt` | Iniciar/enviar examen |
+| GET | `/api/student/progress` | Progreso general |
+| POST | `/api/student/activity` | Registrar actividad |
+| GET | `/api/student/notifications` | Notificaciones |
 
-**Guía rápida:** Ver [DEPLOY.md](DEPLOY.md)
+### Instructor `[requiere rol instructor]`
 
-**Guía completa:** Ver [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/instructor/schedule` | Cuadro semanal |
+| GET | `/api/instructor/schedule/:id/students` | Alumnos por slot |
 
-### Resumen:
+### Health
 
-1. **Frontend:** [Vercel](https://vercel.com) - Gratis, perfecto para Next.js
-2. **Backend:** [Railway](https://railway.app) - Gratis ($5 crédito/mes)
-3. **Base de datos:** Supabase - Ya configurado, plan gratuito suficiente
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/health` | Health check (keep-alive cron) |
 
-### Pasos:
+---
 
-1. Sube tu código a GitHub
-2. Conecta Vercel para el frontend
-3. Conecta Railway para el backend
-4. Configura variables de entorno
-5. ¡Listo! 🎉
+## Tests
 
-**Nota:** Hostinger básico solo soporta HTML estático, no es adecuado para Next.js ni Node.js. Usa Vercel + Railway en su lugar.
+```bash
+cd backend
 
-## Estructura del backend
+# Correr todos los tests
+npm test
+
+# Modo watch (desarrollo)
+npm run test:watch
+
+# Con cobertura
+npm run test:coverage
+```
+
+Los tests unitarios mockean `IUserRepository` y `supabaseAdmin` — no requieren conexión a Supabase.
+
+Para agregar tests de integración, declara `SUPABASE_URL` y `SUPABASE_SERVICE_KEY` como variables de entorno (o GitHub Secrets) y usa la DB de staging.
+
+**Módulos prioritarios para cubrir:**
+
+| Módulo | Tipo de test | Razón |
+|--------|-------------|-------|
+| `userService` | Unit | Lógica crítica: creación, eliminación, cambio de horario |
+| `examService` | Unit | Algoritmo de corrección open-text (Levenshtein) |
+| `authService` | Unit | Login y manejo de sesiones |
+| `cashService` | Unit | Lógica de caja dual-book |
+| `adminRouter` | Integration | Validación de inputs + respuestas HTTP |
+
+---
+
+## Despliegue
+
+Recomendado: **Vercel (frontend) + Railway (backend) + Supabase (DB)**
+
+Ver guía completa en [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+**Resumen rápido:**
+
+1. Sube el código a GitHub.
+2. Conecta **Vercel** al directorio `frontend/`. Agrega `NEXT_PUBLIC_API_URL`.
+3. Conecta **Railway** al directorio `backend/`. Agrega todas las variables `SUPABASE_*`, `JWT_SECRET` y `CORS_ORIGIN` (URL de Vercel).
+4. Configura un cron externo ([cron-job.org](https://cron-job.org)) que llame a `GET /health` cada 10 min para prevenir hibernación.
+
+---
+
+## Git & Ramas
+
+### Estrategia (Git Flow simplificado)
 
 ```
-backend/
-├── src/
-│   ├── config/       # Configuración y Supabase
-│   ├── db/           # Schema SQL, seed, migrate
-│   ├── middleware/   # auth, RBAC
-│   ├── routers/      # authRouter, adminRouter, studentRouter
-│   ├── services/     # authService, adminService, studentService, examService, activityService
-│   ├── types/        # AuthUser, etc.
-│   └── index.ts      # Entry point
-├── package.json
-└── tsconfig.json
+main        ← producción, siempre estable
+develop     ← integración continua
+feature/*   ← nuevas funcionalidades (desde develop)
+fix/*       ← correcciones (desde develop o main si es hotfix)
 ```
+
+### Convención de commits (Conventional Commits)
+
+```
+feat(auth):     nueva funcionalidad de autenticación
+fix(exams):     corrección en calificación de examen
+refactor(users): extrae userService de authService
+test(userService): agrega tests de deleteUser
+docs(readme):   actualiza variables de entorno
+chore(deps):    actualiza express-validator
+```
+
+---
 
 ## Licencia
 
