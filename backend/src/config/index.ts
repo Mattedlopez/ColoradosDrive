@@ -61,14 +61,49 @@ export function isOriginAllowed(origin: string | undefined): boolean {
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
+  /** Supabase queda SOLO como base de datos (la identidad vive en Keycloak). */
   supabase: {
     url: process.env.SUPABASE_URL!,
-    anonKey: process.env.SUPABASE_ANON_KEY!,
     serviceKey: process.env.SUPABASE_SERVICE_KEY!,
-    jwtSecret: process.env.SUPABASE_JWT_SECRET || process.env.JWT_SECRET!,
   },
-  jwt: {
-    secret: process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET!,
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+  /**
+   * Keycloak — control de identidades central (OIDC directo).
+   * El backend valida los access tokens contra el JWKS del realm y usa el
+   * client confidencial `colorados-service` (client_credentials) para la
+   * Admin API y para la trama A→B hacia CampusRide.
+   */
+  keycloak: {
+    url: (process.env.KEYCLOAK_URL || '').replace(/\/$/, ''),
+    realm: process.env.KEYCLOAK_REALM || 'udla8',
+    /** Audience esperado en los tokens de usuario (mapper custom del realm). */
+    audience: process.env.KEYCLOAK_AUDIENCE || 'colorados-api',
+    serviceClientId: process.env.KEYCLOAK_SERVICE_CLIENT_ID || 'colorados-service',
+    serviceClientSecret: process.env.KEYCLOAK_SERVICE_CLIENT_SECRET || '',
+    /** Issuer esperado en los tokens (`iss`). */
+    get issuer(): string {
+      return `${this.url}/realms/${this.realm}`;
+    },
+    /** Endpoint JWKS del realm (claves públicas RS256). */
+    get jwksUrl(): string {
+      return `${this.issuer}/protocol/openid-connect/certs`;
+    },
+    /** Token endpoint (client_credentials del service account). */
+    get tokenUrl(): string {
+      return `${this.issuer}/protocol/openid-connect/token`;
+    },
+    /** Base de la Admin API del realm (gestión de usuarios). */
+    get adminApiUrl(): string {
+      return `${this.url}/admin/realms/${this.realm}`;
+    },
+  },
+  /** Vault Transit (KMS) — cifrado de la trama A→B. */
+  vault: {
+    addr: (process.env.VAULT_ADDR || '').replace(/\/$/, ''),
+    token: process.env.VAULT_TOKEN || '',
+    transitKey: process.env.VAULT_TRANSIT_KEY || 'certifications-key',
+  },
+  /** Sistema B (CampusRide) — receptor de certificaciones cifradas. */
+  campusride: {
+    apiUrl: (process.env.CAMPUSRIDE_API_URL || '').replace(/\/$/, ''),
   },
 };

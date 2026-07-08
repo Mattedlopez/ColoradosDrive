@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { config, isOriginAllowed } from './config';
+import { helmetOptions, globalLimiter, authLimiter } from './config/security';
 import { supabaseAdmin } from './config/supabase';
 import authRouter from './routers/authRouter';
 import adminRouter from './routers/adminRouter';
@@ -11,7 +12,13 @@ import instructorRouter from './routers/instructorRouter';
 
 const app = express();
 
-app.use(helmet());
+// Detrás de un proxy (Railway): confiar solo en el primer salto para obtener
+// la IP real del cliente (necesario para que el rate limiting cuente por IP).
+app.set('trust proxy', 1);
+
+// Sprint 2 · capas 1-2: cabeceras de seguridad endurecidas (HSTS, CSP, referrer).
+// Reemplaza helmet() por defecto con opciones explícitas y trazables (riesgo R2).
+app.use(helmet(helmetOptions));
 app.use(cors({
   origin: (origin, callback) => {
     if (isOriginAllowed(origin)) {
@@ -25,7 +32,11 @@ app.use(cors({
 app.use(morgan('combined'));
 app.use(express.json({ limit: '50mb' }));
 
-app.use('/api/auth', authRouter);
+// Sprint 2 · capa 3: rate limiting global 60 req/min/IP (riesgo R3).
+app.use(globalLimiter);
+
+// Límite estricto adicional en autenticación para frenar fuerza bruta (DoD #2).
+app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/student', studentRouter);
 app.use('/api/instructor', instructorRouter);

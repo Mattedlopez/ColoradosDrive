@@ -1,0 +1,43 @@
+name: CodeQL — Análisis estático de seguridad
+
+# Escanea el código en busca de brechas de seguridad (inyecciones, manejo
+# inseguro de datos, etc.). Es aditivo: no reemplaza al pipeline `ci.yml`.
+# CodeQL no requiere tokens ni cuentas externas.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Escaneo semanal (lunes 06:00 UTC) para detectar nuevas reglas/CVEs.
+    - cron: '0 6 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+        with:
+          languages: ${{ matrix.language }}
+          # 'security-and-quality' amplía la cobertura a hallazgos de calidad.
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+        with:
+          category: '/language:${{ matrix.language }}'

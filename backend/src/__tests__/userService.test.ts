@@ -1,105 +1,115 @@
 /**
- * Unit tests for userService — deleteUser and updateUserProfile.
+ * Unit tests for userService — deleteUser (Keycloak edition).
  *
- * Strategy: mock the Supabase repository (IUserRepository) and supabaseAdmin
- * so tests run without a real DB connection.
- *
- * Priority functions to test (in order of business risk):
- *   1. deleteUser  — irreversible, cascades auth + profile
- *   2. updateUserProfile — schedule cleanup side-effect
- *   3. createUser  — complex orchestration (integration test recommended)
+ * Strategy: mock the Supabase repository (IUserRepository), supabaseAdmin
+ * (DB reads) and keycloakAdminService (identity) so tests run without a real
+ * DB or Keycloak connection.
  */
 
 import { deleteUser } from '../services/userService';
-import * as repositoryModule from '../repositories/SupabaseUserRepository';
+import { userRepository } from '../repositories/SupabaseUserRepository';
 import { IUserRepository } from '../repositories/interfaces/IUserRepository';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
-const mockRepository: jest.Mocked<IUserRepository> = {
-  findById: jest.fn(),
-  findScheduleId: jest.fn(),
-  findByScheduleId: jest.fn(),
-  insertProfile: jest.fn(),
-  updateProfile: jest.fn(),
-  deleteProfile: jest.fn(),
-  deleteScheduleOverrides: jest.fn(),
-};
+// Replace the repository singleton used by userService
+jest.mock('../repositories/SupabaseUserRepository', () => ({
+  userRepository: {
+    findById: jest.fn(),
+    findScheduleId: jest.fn(),
+    findByScheduleId: jest.fn(),
+    insertProfile: jest.fn(),
+    updateProfile: jest.fn(),
+    deleteProfile: jest.fn(),
+    deleteScheduleOverrides: jest.fn(),
+  },
+}));
 
-// Replace singleton used by userService
-jest.spyOn(repositoryModule, 'userRepository', 'get').mockReturnValue(mockRepository);
+const mockRepository = userRepository as jest.Mocked<IUserRepository>;
 
-// Mock supabaseAdmin.auth.admin.deleteUser
+// Mock keycloakAdminService (identity lives in Keycloak now)
+jest.mock('../services/keycloakAdminService', () => ({
+  createKeycloakUser: jest.fn(),
+  deleteKeycloakUser: jest.fn(),
+  resetKeycloakPassword: jest.fn(),
+  updateKeycloakUserName: jest.fn(),
+  findKeycloakUserByEmail: jest.fn(),
+}));
+
+// Mock supabaseAdmin (DB only)
+const mockMaybeSingle = jest.fn();
 jest.mock('../config/supabase', () => ({
   supabaseAdmin: {
-    auth: {
-      admin: {
-        deleteUser: jest.fn(),
-        createUser: jest.fn(),
-        updateUserById: jest.fn(),
-      },
-    },
-    from: jest.fn().mockReturnValue({
+    from: jest.fn().mockImplementation(() => ({
       select: jest.fn().mockReturnThis(),
       insert: jest.fn().mockReturnThis(),
       update: jest.fn().mockReturnThis(),
       delete: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      ilike: jest.fn().mockReturnThis(),
       single: jest.fn().mockResolvedValue({ data: null, error: null }),
+      maybeSingle: mockMaybeSingle,
       limit: jest.fn().mockReturnThis(),
-    }),
-  },
-  supabaseAnon: {
-    auth: {
-      signInWithPassword: jest.fn(),
-    },
+    })),
   },
 }));
 
-import { supabaseAdmin } from '../config/supabase';
+import { deleteKeycloakUser } from '../services/keycloakAdminService';
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('deleteUser', () => {
   const USER_ID = 'test-user-uuid-1234';
+  const KEYCLOAK_SUB = 'keycloak-sub-uuid-9999';
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockMaybeSingle.mockResolvedValue({ data: { keycloak_sub: KEYCLOAK_SUB }, error: null });
   });
 
-  it('deletes schedule overrides, profile, then auth user in order', async () => {
+  it('deletes schedule overrides, profile, then the Keycloak user (by keycloak_sub)', async () => {
     mockRepository.deleteScheduleOverrides.mockResolvedValue(undefined);
     mockRepository.deleteProfile.mockResolvedValue({});
-    (supabaseAdmin.auth.admin.deleteUser as jest.Mock).mockResolvedValue({ error: null });
+    (deleteKeycloakUser as jest.Mock).mockResolvedValue({});
 
     const result = await deleteUser(USER_ID);
 
     expect(result.error).toBeUndefined();
     expect(mockRepository.deleteScheduleOverrides).toHaveBeenCalledWith(USER_ID);
     expect(mockRepository.deleteProfile).toHaveBeenCalledWith(USER_ID);
-    expect(supabaseAdmin.auth.admin.deleteUser).toHaveBeenCalledWith(USER_ID);
+    expect(deleteKeycloakUser).toHaveBeenCalledWith(KEYCLOAK_SUB);
   });
 
-  it('returns error and skips auth deletion when profile delete fails', async () => {
+  it('falls back to the profile PK when keycloak_sub is missing (new users: PK = sub)', async () => {
+    mockMaybeSingle.mockResolvedValue({ data: { keycloak_sub: null }, error: null });
+    mockRepository.deleteScheduleOverrides.mockResolvedValue(undefined);
+    mockRepository.deleteProfile.mockResolvedValue({});
+    (deleteKeycloakUser as jest.Mock).mockResolvedValue({});
+
+    const result = await deleteUser(USER_ID);
+
+    expect(result.error).toBeUndefined();
+    expect(deleteKeycloakUser).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it('returns error and skips Keycloak deletion when profile delete fails', async () => {
     mockRepository.deleteScheduleOverrides.mockResolvedValue(undefined);
     mockRepository.deleteProfile.mockResolvedValue({ error: 'DB constraint violation' });
 
     const result = await deleteUser(USER_ID);
 
     expect(result.error).toBe('DB constraint violation');
-    expect(supabaseAdmin.auth.admin.deleteUser).not.toHaveBeenCalled();
+    expect(deleteKeycloakUser).not.toHaveBeenCalled();
   });
 
-  it('returns error when Supabase auth deletion fails', async () => {
+  it('returns error when Keycloak deletion fails', async () => {
     mockRepository.deleteScheduleOverrides.mockResolvedValue(undefined);
     mockRepository.deleteProfile.mockResolvedValue({});
-    (supabaseAdmin.auth.admin.deleteUser as jest.Mock).mockResolvedValue({
-      error: { message: 'User not found in auth' },
-    });
+    (deleteKeycloakUser as jest.Mock).mockResolvedValue({ error: 'Keycloak Admin API devolvió 500' });
 
     const result = await deleteUser(USER_ID);
 
-    expect(result.error).toBe('User not found in auth');
+    expect(result.error).toBe('Keycloak Admin API devolvió 500');
   });
 });
 

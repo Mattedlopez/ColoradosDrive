@@ -2,7 +2,7 @@
  * userService — user lifecycle management (create / update / delete).
  *
  * Extracted from authService to satisfy SRP:
- *   - authService  → authentication tokens, Supabase session management
+ *   - authService  → identity accounts (Keycloak Admin API)
  *   - userService  → user_profiles CRUD, cohort/schedule wiring, payments
  *
  * Uses userRepository (IUserRepository) for all DB writes, making this
@@ -11,6 +11,13 @@
 
 import { supabaseAdmin } from '../config/supabase';
 import { userRepository } from '../repositories/SupabaseUserRepository';
+import {
+  createKeycloakUser,
+  deleteKeycloakUser,
+  resetKeycloakPassword,
+  updateKeycloakUserName,
+  findKeycloakUserByEmail,
+} from './keycloakAdminService';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -98,19 +105,21 @@ function clampHours(n: number | null | undefined): number {
 // ─── createUser ──────────────────────────────────────────────────────────────
 
 export async function createUser(params: CreateUserParams): Promise<{ userId: string; error?: string }> {
-  // 1. Create Supabase Auth user
-  const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+  // 1. Crear el usuario en Keycloak (la identidad ya no vive en Supabase Auth).
+  //    El PK del perfil local = UUID de Keycloak.
+  const created = await createKeycloakUser({
     email: params.email,
+    fullName: params.fullName,
     password: params.password,
-    email_confirm: true,
-    user_metadata: { full_name: params.fullName },
+    role: params.role,
+    temporaryPassword: params.mustChangePassword ?? true,
   });
 
-  if (authError || !authData.user) {
-    return { userId: '', error: authError?.message || 'Failed to create user' };
+  if (created.error || !created.userId) {
+    return { userId: '', error: created.error || 'Failed to create user' };
   }
 
-  const authUserId = authData.user.id;
+  const authUserId = created.userId;
 
   // 2. Resolve cohort / course
   let courseId: string | null = null;
@@ -150,7 +159,7 @@ export async function createUser(params: CreateUserParams): Promise<{ userId: st
         const { getOrCreateScheduleGroup, getAvailableStartTimes } = await import('./scheduleService');
         const available = await getAvailableStartTimes(cohortId, params.instructorId, params.scheduleType, hoursPerDay, null);
         if (!available.some((s) => s.start_time === startTimeNorm)) {
-          await supabaseAdmin.auth.admin.deleteUser(authUserId);
+          await deleteKeycloakUser(authUserId);
           return { userId: '', error: 'El horario seleccionado no está disponible. Elige otra hora o duración.' };
         }
         const { firstSlotId } = await getOrCreateScheduleGroup({
@@ -224,6 +233,7 @@ export async function createUser(params: CreateUserParams): Promise<{ userId: st
 
   const profileRow: Record<string, unknown> = {
     id: authUserId,
+    keycloak_sub: authUserId,
     email: params.email,
     full_name: params.fullName,
     role: params.role,
@@ -258,17 +268,18 @@ export async function createUser(params: CreateUserParams): Promise<{ userId: st
   // 7. Insert profile (with graceful column-missing fallback)
   let insertResult = await userRepository.insertProfile(profileRow);
   if (insertResult.error) {
-    if (/practice_weeks|practice_start_date|practice_end_date|gender|practice_hours_per_day|column.*does not exist/i.test(insertResult.error)) {
+    if (/practice_weeks|practice_start_date|practice_end_date|gender|practice_hours_per_day|keycloak_sub|column.*does not exist/i.test(insertResult.error)) {
       const fallback = { ...profileRow };
       delete fallback.practice_weeks;
       delete fallback.practice_start_date;
       delete fallback.practice_end_date;
       delete fallback.gender;
       delete fallback.practice_hours_per_day;
+      delete fallback.keycloak_sub;
       insertResult = await userRepository.insertProfile(fallback);
     }
     if (insertResult.error) {
-      await supabaseAdmin.auth.admin.deleteUser(authUserId);
+      await deleteKeycloakUser(authUserId);
       return { userId: '', error: insertResult.error };
     }
   }
@@ -294,13 +305,23 @@ export async function createUser(params: CreateUserParams): Promise<{ userId: st
 // ─── deleteUser ──────────────────────────────────────────────────────────────
 
 export async function deleteUser(userId: string): Promise<{ error?: string }> {
+  // Leer el keycloak_sub ANTES de borrar el perfil (para usuarios legacy el
+  // PK no coincide con el id de Keycloak). Fallback: el propio PK.
+  const { data: profile } = await supabaseAdmin
+    .from('user_profiles')
+    .select('keycloak_sub')
+    .eq('id', userId)
+    .maybeSingle();
+  const keycloakId = ((profile as { keycloak_sub?: string | null } | null)?.keycloak_sub) ?? userId;
+
   await userRepository.deleteScheduleOverrides(userId);
 
   const profileResult = await userRepository.deleteProfile(userId);
   if (profileResult.error) return profileResult;
 
-  const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
-  if (error) return { error: error.message };
+  // Best-effort en Keycloak: deleteKeycloakUser tolera 404 (usuario inexistente).
+  const { error } = await deleteKeycloakUser(keycloakId);
+  if (error) return { error };
   return {};
 }
 
@@ -310,18 +331,44 @@ export async function updateUserProfile(
   userId: string,
   params: UpdateUserParams,
 ): Promise<{ error?: string }> {
-  // Update Supabase Auth metadata / password
-  if (params.password !== undefined) {
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      password: params.password,
-      ...(params.fullName !== undefined && { user_metadata: { full_name: params.fullName } }),
-    });
-    if (error) return { error: error.message };
-  } else if (params.fullName !== undefined) {
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      user_metadata: { full_name: params.fullName },
-    });
-    if (error) return { error: error.message };
+  // Sincronizar contraseña / nombre con Keycloak (la identidad ya no vive en Supabase Auth)
+  if (params.password !== undefined || params.fullName !== undefined) {
+    const { data: profile } = await supabaseAdmin
+      .from('user_profiles')
+      .select('keycloak_sub, email')
+      .eq('id', userId)
+      .maybeSingle();
+    const row = profile as { keycloak_sub: string | null; email: string } | null;
+
+    // Resolver el id de Keycloak: keycloak_sub o búsqueda por email (con self-heal).
+    let keycloakId = row?.keycloak_sub ?? null;
+    if (!keycloakId && row?.email) {
+      try {
+        const found = await findKeycloakUserByEmail(row.email);
+        keycloakId = found?.id ?? null;
+      } catch {
+        keycloakId = null;
+      }
+      if (keycloakId) {
+        await supabaseAdmin
+          .from('user_profiles')
+          .update({ keycloak_sub: keycloakId })
+          .eq('id', userId);
+      }
+    }
+
+    if (params.password !== undefined) {
+      if (!keycloakId) {
+        return { error: 'El usuario no tiene cuenta en Keycloak: no se puede cambiar la contraseña.' };
+      }
+      const { error } = await resetKeycloakPassword(keycloakId, params.password);
+      if (error) return { error };
+    }
+
+    // Nombre: sincronización best-effort (el nombre canónico vive en user_profiles).
+    if (params.fullName !== undefined && keycloakId) {
+      await updateKeycloakUserName(keycloakId, params.fullName);
+    }
   }
 
   const update: Record<string, unknown> = {};

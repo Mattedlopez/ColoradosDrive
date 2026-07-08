@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../config/supabase';
+import { notifyExamPassed } from './certificationService';
 
 export interface CreateExamParams {
   subjectId?: string;
@@ -533,7 +534,7 @@ export async function submitAttempt(
 ) {
   const { data: attempt, error: attErr } = await supabaseAdmin
     .from('exam_attempts')
-    .select('id, exam_id')
+    .select('id, exam_id, is_definitive')
     .eq('id', attemptId)
     .eq('user_id', userId)
     .single();
@@ -646,6 +647,16 @@ export async function submitAttempt(
     .from('exam_attempts')
     .update({ score, passed, finished_at: new Date().toISOString() })
     .eq('id', attemptId);
+
+  // A→B: si aprobó el examen DEFINITIVO, notificar a CampusRide (trama cifrada
+  // con Vault Transit). Fire-and-forget: un fallo en B no bloquea la entrega
+  // de la calificación al alumno; solo se registra el error.
+  const isDefinitive = (attempt as { is_definitive?: boolean }).is_definitive === true;
+  if (passed && isDefinitive) {
+    void notifyExamPassed(userId, attempt.exam_id, score).catch((e) =>
+      console.error('[certification] Error notificando la certificación a CampusRide:', e),
+    );
+  }
 
   return {
     score,

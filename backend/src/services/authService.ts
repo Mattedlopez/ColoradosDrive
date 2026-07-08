@@ -1,61 +1,19 @@
 /**
- * authService — Supabase session management only.
+ * authService — cuentas de acceso vía Keycloak.
  *
- * Single responsibility: anything that touches Supabase Auth tokens or
- * the auth.users table. User profile CRUD lives in userService.
+ * Responsabilidad única: todo lo que toca cuentas de identidad (Keycloak
+ * Admin API). El login ya NO pasa por aquí: el frontend hace OIDC directo
+ * contra Keycloak (PKCE) y el backend solo valida tokens en el middleware.
+ * El CRUD de perfiles vive en userService.
  */
 
-import { supabaseAdmin, supabaseAnon } from '../config/supabase';
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-export interface LoginResult {
-  accessToken: string;
-  refreshToken?: string;
-  user: {
-    id: string;
-    email: string;
-    fullName: string;
-    role: string;
-    courseId: string | null;
-    instructorId?: string | null;
-  };
-}
-
-// ─── login ───────────────────────────────────────────────────────────────────
-
-export async function login(email: string, password: string): Promise<LoginResult | null> {
-  const { data, error } = await supabaseAnon.auth.signInWithPassword({ email, password });
-
-  if (error || !data.session || !data.user) return null;
-
-  const { data: profile, error: profileError } = await supabaseAdmin
-    .from('user_profiles')
-    .select('id, email, full_name, role, course_id, cohort_id, instructor_id, cohorts(course_id)')
-    .eq('id', data.user.id)
-    .single();
-
-  if (profileError) throw new Error(`Perfil: ${profileError.message}`);
-  if (!profile) return null;
-
-  const courseId =
-    profile.course_id ??
-    (profile.cohorts as { course_id?: string } | null)?.course_id ??
-    null;
-
-  return {
-    accessToken: data.session.access_token,
-    refreshToken: data.session.refresh_token,
-    user: {
-      id: profile.id,
-      email: profile.email,
-      fullName: profile.full_name || '',
-      role: profile.role,
-      courseId,
-      instructorId: (profile as { instructor_id?: string | null }).instructor_id ?? null,
-    },
-  };
-}
+import { supabaseAdmin } from '../config/supabase';
+import {
+  createKeycloakUser,
+  deleteKeycloakUser,
+  resetKeycloakPassword,
+  findKeycloakUserByEmail,
+} from './keycloakAdminService';
 
 // ─── createInstructorWithLogin ───────────────────────────────────────────────
 
@@ -65,19 +23,21 @@ export async function createInstructorWithLogin(params: {
   password: string;
   fullName: string;
 }): Promise<{ userId: string; error?: string }> {
-  const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+  const created = await createKeycloakUser({
     email: params.email,
+    fullName: params.fullName,
     password: params.password,
-    email_confirm: true,
-    user_metadata: { full_name: params.fullName },
+    role: 'instructor',
   });
 
-  if (authError || !authData.user) {
-    return { userId: '', error: authError?.message || 'Error al crear usuario' };
+  if (created.error || !created.userId) {
+    return { userId: '', error: created.error || 'Error al crear usuario' };
   }
 
+  // PK del perfil = UUID de Keycloak (y keycloak_sub para el lookup del middleware).
   const { error: profileError } = await supabaseAdmin.from('user_profiles').insert({
-    id: authData.user.id,
+    id: created.userId,
+    keycloak_sub: created.userId,
     email: params.email,
     full_name: params.fullName,
     role: 'instructor',
@@ -85,11 +45,11 @@ export async function createInstructorWithLogin(params: {
   });
 
   if (profileError) {
-    await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+    await deleteKeycloakUser(created.userId);
     return { userId: '', error: profileError.message };
   }
 
-  return { userId: authData.user.id };
+  return { userId: created.userId };
 }
 
 // ─── updateInstructorPassword ────────────────────────────────────────────────
@@ -100,17 +60,34 @@ export async function updateInstructorPassword(
 ): Promise<{ error?: string }> {
   const { data: profile } = await supabaseAdmin
     .from('user_profiles')
-    .select('id')
+    .select('id, email, keycloak_sub')
     .eq('instructor_id', instructorId)
     .eq('role', 'instructor')
     .maybeSingle();
 
   if (!profile) return { error: 'No existe cuenta de acceso para este instructor' };
 
-  const { error } = await supabaseAdmin.auth.admin.updateUserById(
-    (profile as { id: string }).id,
-    { password: newPassword },
-  );
-  if (error) return { error: error.message };
+  const row = profile as { id: string; email: string; keycloak_sub: string | null };
+
+  // Resolver el id de Keycloak: keycloak_sub o búsqueda por email (con self-heal).
+  let keycloakId = row.keycloak_sub;
+  if (!keycloakId) {
+    try {
+      const found = await findKeycloakUserByEmail(row.email);
+      keycloakId = found?.id ?? null;
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : 'Error al buscar el usuario en Keycloak' };
+    }
+    if (!keycloakId) {
+      return { error: 'El instructor no tiene cuenta en Keycloak (federar primero)' };
+    }
+    await supabaseAdmin
+      .from('user_profiles')
+      .update({ keycloak_sub: keycloakId })
+      .eq('id', row.id);
+  }
+
+  const { error } = await resetKeycloakPassword(keycloakId, newPassword);
+  if (error) return { error };
   return {};
 }

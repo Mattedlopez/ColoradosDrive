@@ -1,4 +1,4 @@
-import { getApiUrl, isApiUrlConfiguredForProduction } from '@/lib/env';
+import { getApiUrl } from '@/lib/env';
 
 const API_URL = getApiUrl();
 
@@ -11,39 +11,10 @@ export interface User {
   instructorId?: string | null;
 }
 
-export interface LoginResponse {
-  accessToken: string;
-  refreshToken?: string;
-  user: User;
-}
-
-export async function login(email: string, password: string): Promise<LoginResponse> {
-  if (!isApiUrlConfiguredForProduction(API_URL)) {
-    throw new Error(
-      'Configuracion de produccion incompleta: define NEXT_PUBLIC_API_URL en Vercel con la URL publica del backend.'
-    );
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-  } catch {
-    throw new Error(
-      'No se pudo conectar con el servidor. Verifica NEXT_PUBLIC_API_URL en Vercel y CORS_ORIGIN en el backend.'
-    );
-  }
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = typeof body?.error === 'string' ? body.error : 'Error al iniciar sesión';
-    throw new Error(msg);
-  }
-  return body;
-}
-
+/**
+ * Resuelve el perfil local a partir del access token de Keycloak.
+ * El backend valida el JWT (issuer + audience) y busca el perfil en BD.
+ */
 export async function getMe(token: string): Promise<User> {
   let res: Response;
   try {

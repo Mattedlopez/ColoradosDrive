@@ -1,17 +1,13 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Logo } from '@/components/Logo';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [focused, setFocused] = useState<'email' | 'password' | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
   const { login, user, loading: authLoading } = useAuth();
   const router = useRouter();
 
@@ -22,17 +18,14 @@ export default function LoginPage() {
     }
   }, [user, authLoading, router]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = async () => {
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
+      // Redirige a Keycloak (OIDC + PKCE); el retorno llega a /auth/callback.
+      await login();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al iniciar sesión');
-      formRef.current?.classList.add('animate-shake');
-      setTimeout(() => formRef.current?.classList.remove('animate-shake'), 400);
-    } finally {
+      setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión');
       setLoading(false);
     }
   };
@@ -76,7 +69,7 @@ export default function LoginPage() {
         />
       </div>
 
-      {/* Panel izquierdo: formulario centrado */}
+      {/* Panel izquierdo: acceso centrado */}
       <div className="relative z-10 flex-1 flex items-center justify-center p-4 sm:p-10 lg:p-16 overflow-y-auto">
         <div className="w-full max-w-[420px] py-4">
           <div
@@ -92,113 +85,55 @@ export default function LoginPage() {
                 Bienvenido
               </h1>
               <p className="mt-1.5 text-neutral-500 text-sm sm:text-base">
-                Ingresa tus credenciales para acceder a tu curso
+                Accede con tu cuenta institucional para entrar a tu curso
               </p>
             </div>
 
-            <form ref={formRef} onSubmit={handleSubmit} className="space-y-5">
-              {error && (
-                <div
-                  className="flex items-center gap-3 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm"
-                  role="alert"
-                >
-                  <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span>{error}</span>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <label htmlFor="email" className="block text-sm font-medium text-neutral-700">
-                  Correo electrónico
-                </label>
-                <div
-                  className={`
-                    flex items-center gap-3 rounded-xl border bg-neutral-50/50 transition-all duration-200
-                    ${focused === 'email'
-                      ? 'border-red-500 ring-2 ring-red-500/20 bg-white'
-                      : 'border-neutral-200 hover:border-neutral-300'
-                    }
-                  `}
-                >
-                  <span className="pl-4 text-neutral-400">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                  </span>
-                  <input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    onFocus={() => setFocused('email')}
-                    onBlur={() => setFocused(null)}
-                    required
-                    autoComplete="email"
-                    className="flex-1 py-3.5 pr-4 bg-transparent border-0 outline-none text-neutral-900 placeholder:text-neutral-400 text-sm sm:text-base"
-                    placeholder="tu@correo.com"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="password" className="block text-sm font-medium text-neutral-700">
-                  Contraseña
-                </label>
-                <div
-                  className={`
-                    flex items-center gap-3 rounded-xl border bg-neutral-50/50 transition-all duration-200
-                    ${focused === 'password'
-                      ? 'border-red-500 ring-2 ring-red-500/20 bg-white'
-                      : 'border-neutral-200 hover:border-neutral-300'
-                    }
-                  `}
-                >
-                  <span className="pl-4 text-neutral-400">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                  </span>
-                  <input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onFocus={() => setFocused('password')}
-                    onBlur={() => setFocused(null)}
-                    required
-                    autoComplete="current-password"
-                    className="flex-1 py-3.5 pr-4 bg-transparent border-0 outline-none text-neutral-900 placeholder:text-neutral-400 text-sm sm:text-base"
-                    placeholder="••••••••"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="
-                  w-full min-h-[48px] py-4 rounded-xl font-semibold text-white
-                  bg-gradient-to-b from-red-600 to-red-700
-                  shadow-lg shadow-red-600/30
-                  hover:from-red-500 hover:to-red-600
-                  hover:shadow-xl hover:shadow-red-500/35 hover:-translate-y-0.5
-                  active:translate-y-0 active:shadow-md
-                  disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0
-                  transition-all duration-200
-                "
+            {error && (
+              <div
+                className="mb-5 flex items-center gap-3 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm"
+                role="alert"
               >
-                {loading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Ingresando...
-                  </span>
-                ) : (
-                  'Ingresar'
-                )}
-              </button>
-            </form>
+                <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{error}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleLogin}
+              disabled={loading}
+              className="
+                w-full min-h-[48px] py-4 rounded-xl font-semibold text-white
+                bg-gradient-to-b from-red-600 to-red-700
+                shadow-lg shadow-red-600/30
+                hover:from-red-500 hover:to-red-600
+                hover:shadow-xl hover:shadow-red-500/35 hover:-translate-y-0.5
+                active:translate-y-0 active:shadow-md
+                disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0
+                transition-all duration-200 flex items-center justify-center gap-2
+              "
+            >
+              {loading ? (
+                <>
+                  <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Redirigiendo...
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  Iniciar sesión
+                </>
+              )}
+            </button>
+
+            <p className="mt-4 text-center text-xs text-neutral-400">
+              Autenticación centralizada (Keycloak · SSO · OTP)
+            </p>
 
             <p className="mt-6 text-center text-sm text-neutral-500">
               ¿Problemas para acceder? Contacta a tu instructor.

@@ -1,33 +1,13 @@
-import { Router, Request, Response } from 'express';
-import { body } from 'express-validator';
-import { login } from '../services/authService';
+import { Router, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import { handleValidation } from '../middleware/validate';
 import { AuthenticatedRequest } from '../types';
 
+/**
+ * authRouter — el login ya NO vive aquí: el frontend hace OIDC directo contra
+ * Keycloak (PKCE) y este backend solo valida tokens. El 2FA (OTP TOTP) también
+ * lo gestiona Keycloak (required action CONFIGURE_TOTP).
+ */
 const router = Router();
-
-router.post(
-  '/login',
-  [
-    body('email').isEmail().normalizeEmail().withMessage('Correo electrónico no válido'),
-    body('password').notEmpty().withMessage('La contraseña es requerida'),
-  ],
-  handleValidation,
-  async (req: Request, res: Response) => {
-    const { email, password } = req.body;
-    try {
-      const result = await login(email, password);
-      if (!result) {
-        return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
-      }
-      return res.json(result);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Error al iniciar sesión';
-      return res.status(500).json({ error: message });
-    }
-  },
-);
 
 router.get('/me', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) {
