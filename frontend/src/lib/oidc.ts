@@ -26,7 +26,9 @@ export function getUserManager(): UserManager {
       scope: 'openid profile email',
       userStore: new WebStorageStateStore({ store: window.localStorage }),
       automaticSilentRenew: true,
-      monitorSession: false,
+      // Single Logout: vigila el check_session_iframe de Keycloak; si la sesión
+      // del IdP muere (logout desde la otra app), dispara addUserSignedOut.
+      monitorSession: true,
     });
   }
   return userManager;

@@ -63,11 +63,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     manager.events.addUserLoaded(onUserLoaded);
     manager.events.addAccessTokenExpired(onExpired);
+    // Single Logout: la sesión del IdP terminó (logout hecho desde la otra app).
+    manager.events.addUserSignedOut(onExpired);
 
     return () => {
       cancelled = true;
       manager.events.removeUserLoaded(onUserLoaded);
       manager.events.removeAccessTokenExpired(onExpired);
+      manager.events.removeUserSignedOut(onExpired);
     };
   }, [router]);
 

@@ -91,6 +91,11 @@ export async function notifyExamPassed(
 
   // Trama cifrada extremo a extremo con Vault Transit (KMS).
   const ciphertext = await encryptWithTransit(JSON.stringify(payload));
+  // Evidencia de la trama en tránsito: solo el ciphertext (la PII nunca en claro).
+  console.log(
+    `[certification] Trama cifrada con Vault Transit → POST ${config.campusride.apiUrl}/api/certifications ` +
+      `ciphertext=${ciphertext.slice(0, 60)}… (${ciphertext.length} chars)`,
+  );
   const token = await getServiceToken();
 
   const res = await fetch(`${config.campusride.apiUrl}/api/certifications`, {
